@@ -7,15 +7,6 @@ const client = new Client('postgres://localhost:5432/juicebox-dev');
 //   client,
 // }
 
-async function getAllUsers() {
-  const { rows } = await client.query(
-    `SELECT id, username 
-    FROM users;
-  `);
-
-  return rows;
-}
-
 async function createUser({ 
   username, 
   password,
@@ -61,6 +52,15 @@ async function updateUser(id, fields = {}) {
   }
 }
 
+async function getAllUsers() {
+  const { rows } = await client.query(
+    `SELECT id, username 
+    FROM users;
+  `);
+
+  return rows;
+}
+
 async function createPost({
   authorId,
   title,
@@ -68,11 +68,10 @@ async function createPost({
 }) {
   try {
     const { rows: [ post ]} = await client.query(`
-    INSERT INTO posts(id, authorId, title, content,) 
-    VALUES($1, $2, $3, $4) 
-    ON CONFLICT (username) DO NOTHING 
+    INSERT INTO posts("authorId", title, content) 
+    VALUES($1, $2, $3 ) 
     RETURNING *;
-  `, [authorId, title, content,]);
+  `, [authorId, title, content ]);
 
     return post;
   } catch (error) {
@@ -80,47 +79,102 @@ async function createPost({
   }
 }
 
-async function updatePost(id, {
-  title,
-  content,
-  active
-}) { 
+async function updatePost(id, fields = {}) { 
   
   const setString = Object.keys(fields).map(
   (key, index) => `"${ key }"=$${ index + 1 }`
 ).join(', ');
 
-if (setString.length === 0) {
-  return;
-}
-
-  try {
-  const { rows: [post] } = await client.query(`
-    UPDATE post
+  try { 
+    if (setString.length > 0) {
+     await client.query(`
+    UPDATE posts
     SET ${ setString }
     WHERE id=${ id }
     RETURNING *;
   `, Object.values(fields));
-
-  return post;
+    }
+    
+  return await getPostById(id);
 } catch (error) {
   throw error;
 }
 }
 
 async function getAllPosts() {
-  
-    const { rows } = await client.query(
-    `SELECT authorId, title, content 
-    FROM post;
+  try{
+    const { rows: postIds } = await client.query(
+    `SELECT id 
+    FROM posts;
   `);
 
-  return rows;
-} 
+  const posts = await Promise.all(postIds.map(
+    post => getPostById( post.id )
+  ));
+
+  return posts;
+} catch (error) {
+  throw error;
+}
+}
+
+async function getPostById(postId) {
+  try {
+    const { rows: [ post ]  } = await client.query(`
+      SELECT *
+      FROM posts
+      WHERE id=$1;
+    `, [postId]);
+
+    // const { rows: tags } = await client.query(`
+    //   SELECT tags.*
+    //   FROM tags
+    //   JOIN post_tags ON tags.id=post_tags."tagId"
+    //   WHERE post_tags."postId"=$1;
+    // `, [postId])
+
+    const { rows: [author] } = await client.query(`
+      SELECT id, username, name, location
+      FROM users
+      WHERE id=$1;
+    `, [post.authorId])
+
+    // post.tags = tags;
+    post.author = author;
+
+    delete post.authorId;
+
+    return post;
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function getUserById(userId) {
+  // first get the user
+    try {
+    const { rows } = await client.query(`
+    SELECT * FROM users WHERE id = $1; ` , [userId]);
+    // if it doesn't exist, return null
+    if (!rows||!rows.length) {return null};
+    // if it does:
+    // delete the 'password' key from the returned object
+    const [ user ]  = rows;
+    delete user.password;
+    // get their posts (use getPostsByUser)
+    user.posts = await getPostsByUser(userId);
+    // then add the posts to the user object with key 'posts'
+    // return the user object
+    return user;
+  console.log('>>>>>>>' , user)
+  } catch(error){
+    console.error(error)
+  }
+}
 
 async function getPostsByUser(userId) {
   try {
-    const { rows } = client.query(`
+    const { rows } = await client.query(`
       SELECT * FROM posts
       WHERE "authorId"=${ userId };
     `);
@@ -131,29 +185,15 @@ async function getPostsByUser(userId) {
   }
 }
 
-async function getUserById(userId) {
-  // first get the user
-  // try {
-  //   const { rows } = client.query(`
-  //   SELECT 
-  // if it doesn't exist, return null
-
-  // if it does:
-  // delete the 'password' key from the returned object
-  // get their posts (use getPostsByUser)
-  // then add the posts to the user object with key 'posts'
-  // return the user object
-}
-
 // and export them
 module.exports = {
   client,
   getAllUsers,
   createUser, 
   updateUser,
-  // createPost,
-  // updatePost,
-  // getAllPosts,
-  // getPostsByUser,
-  // getUserById
+  createPost,
+  updatePost,
+  getAllPosts,
+  getPostsByUser,
+  getUserById
 }
